@@ -1,0 +1,1 @@
+exports.FROM_BATCH = 5000;

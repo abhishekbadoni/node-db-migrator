@@ -1,0 +1,34 @@
+{
+  "name": "db-migrator-mongo",
+  "version": "0.0.0",
+  "description": "mongo helper package for db-migrator-core",
+  "author": "Abhishek Badoni <abhishekbadoni>",
+  "homepage": "",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "__tests__",
+    "example": "examples"
+  },
+  "files": [
+    "lib"
+  ],
+  "keywords": [
+    "migrate",
+    "migrator",
+    "migration",
+    "data",
+    "mongo"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abhishekbadoni/node-db-migrator/blob/master/packages/db-migrator-mongo"
+  },
+  "scripts": {
+    "test": "echo \"Error: run tests from root\" && exit 1"
+  },
+  "dependencies": {
+    "mongodb": "^3.6.4"
+  }
+}

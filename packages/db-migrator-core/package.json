@@ -1,0 +1,35 @@
+{
+  "name": "db-migrator-core",
+  "version": "0.0.0",
+  "description": "A database migration tool built in node.js.",
+  "author": "Abhishek Badoni <abhishekbadoni>",
+  "homepage": "",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "__tests__",
+    "example": "examples"
+  },
+  "files": [
+    "lib"
+  ],
+  "keywords": [
+    "migrate",
+    "migrator",
+    "migration",
+    "data",
+    "mongo"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abhishekbadoni/node-db-migrator/blob/master/packages/db-migrator-core"
+  },
+  "scripts": {
+    "test": "echo \"Error: run tests from root\" && exit 1"
+  },
+  "dependencies": {
+    "mongodb": "^3.6.4",
+    "uuid": "^8.3.2"
+  }
+}
