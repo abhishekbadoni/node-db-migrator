@@ -1,9 +1,20 @@
 const { BaseConnector } = require('../../../db-migrator-core');
 const MongoClient = require('mongodb').MongoClient;
 const errors = require('../errors');
+const debug = require('debug')('db-migrator:mongo');
 
+const ERROR_CODES = {
+  11000: 'DUPLICATE_DOCUMENT',
+}
 class MongoConnecter extends BaseConnector {
 
+  getDocumentError(err) {
+    if (ERROR_CODES.hasOwnProperty(err.code)) {
+      err.code = ERROR_CODES[err.code];
+    }
+    return err;
+  }
+  
   validateConfig(config) {
     return config.hasOwnProperty('url') && config.hasOwnProperty('database');
   }
@@ -17,8 +28,12 @@ class MongoConnecter extends BaseConnector {
         this.database = client.db(config.database);
         this.config = config;
         console.log(`DbMigrator :: Database :: connection successful :: ${config.database}`);
+        debug('db-migrator:mongo :: connection successful');
         resolve();
-      }).catch((error) => Promise.reject(error));
+      }).catch((error) => {
+        debug('db-migrator:mongo :: connection failed', error);
+        return reject(error)
+      });
     });
   }
 
@@ -35,7 +50,7 @@ class MongoConnecter extends BaseConnector {
     const errorsArray = [];
     const { collection } = to;
     if (!collection) errorsArray.push(errors.invalidToCollection());
-    return errorsArray;    
+    return errorsArray;
   }
 
   // Return documents count as per the query provided
@@ -63,11 +78,25 @@ class MongoConnecter extends BaseConnector {
 
   // Save document to target collection in target database
   storeDocument(to, document) {
-    return this.database.collection(to.collection).insertOne(document);
+    return new Promise((resolve, reject) => {
+      this.database.collection(to.collection).insertOne(document).then(res => {
+        resolve(res);
+      }).catch(err => {
+        reject(this.getDocumentError(err));
+      });
+    });
   }
 
   countDocumentsQuery(collection, query) {
-    return this.database.collection(collection).countDocuments(query);
+    return new Promise((resolve, reject) => {
+      this.database.collection(collection).countDocuments(query).then(res => {
+        resolve(res);
+        debug('db-migrator:mongo :: count documents query successful');
+      }).catch(err => {
+        debug('db-migrator:mongo :: count documents query failed', err);
+        reject(err);
+      })
+    });
   }
 
   countDocumentsAggregate(collection, aggregate) {
@@ -80,7 +109,11 @@ class MongoConnecter extends BaseConnector {
       }
 
       this.database.collection(collection).aggregate(aggregate).toArray((err, res) => {
-        if (err) return reject(err);
+        if (err) {
+          debug('db-migrator:mongo :: count documents aggregate failed', err);
+          return reject(err);
+        }
+        debug('db-migrator:mongo :: count documents aggregate successful');
         resolve(res.length ? res[0].count : 0);
       });
     });
@@ -88,7 +121,14 @@ class MongoConnecter extends BaseConnector {
 
   fetchDocumentsQuery(collection, query, skip, limit, cb) {
     return this.database.collection(collection).find(query).limit(limit).skip(skip)
-      .toArray((err, documents) => cb(err, documents));
+      .toArray((err, documents) => {
+        if (err) {
+          debug('db-migrator:mongo :: fetch documents query failed', err);
+        } else {
+          debug('db-migrator:mongo :: fetch documents query successful');
+        }
+        cb(err, documents)
+      });
   }
 
   fetchDocumentsAggregate(collection, aggregate, skip, limit, cb) {
@@ -108,7 +148,14 @@ class MongoConnecter extends BaseConnector {
     }
 
     this.database.collection(collection).aggregate(aggregate).toArray(
-      (err, documents) => cb(err, documents),
+      (err, documents) => {
+        if (err) {
+          debug('db-migrator:mongo :: fetch documents aggregate failed', err);
+        } else {
+          debug('db-migrator:mongo :: fetch documents aggregate successful');
+        }
+        cb(err, documents)
+      }
     );
 
   }

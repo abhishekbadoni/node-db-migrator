@@ -23,6 +23,11 @@ exports.invalidTo = () => ({
     code: 'INVALID_TO',
 });
 
+exports.invalidTransform = () => ({
+    message: `transform should be a function`,
+    code: 'INVALID_TRANSFORM',
+});
+
 exports.invalidProperties = () => ({
     message: `properties should be a non empty object`,
     code: 'INVALID_PROPERTIES',

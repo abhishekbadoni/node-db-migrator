@@ -4,24 +4,33 @@ const connectors = require('./connectors');
 const constants = require('./constants');
 const errors = require('./errors');
 const utils = require('./utils');
+const debug = require('debug')('db-migrator:core');
+const BaseConnector = require('./helpers/base-connector');
 
+const DEFAULT_OPTIONS = {
+  ignoreDuplicates: false
+}
 class DbMigrator {
 
-  constructor() {
-    this.initialize();
+  constructor(options) {
+    this.initialize(options);
   }
 
+  // Source database name
   get sourceDb() {
     return this.sourceConnector && this.sourceConnector.getDatabaseName();
   }
 
+  // Target database name
   get targetDb() {
     return this.targetConnector && this.targetConnector.getDatabaseName();
   }
 
+  // Connect source database
   connectSourceDatabase(connector, config) {
     return new Promise((resolve, reject) => {
       if (!this.hasConnector(connector)) return reject(errors.invalidConnector(connector));
+      debug(`db-migrator:core :: connecting source ${connector}`, config);
       this.sourceConnector = new this.connectors[connector]();
       this.sourceConnector.connectDatabase(config)
         .then(res => resolve(res))
@@ -29,9 +38,11 @@ class DbMigrator {
     })
   }
 
+  // Connect target database
   connectTargetDatabase(connector, config) {
     return new Promise((resolve, reject) => {
       if (!this.hasConnector(connector)) return reject(errors.invalidConnector(connector));
+      debug(`db-migrator:core :: connecting target ${connector}`, config);
       this.targetConnector = new this.connectors[connector]();
       this.targetConnector.connectDatabase(config)
         .then(res => resolve(res))
@@ -39,12 +50,15 @@ class DbMigrator {
     });
   }
 
-  // validate all the migrators if they are valid or not and set in migrators variable
+  // Set in migrators variable
   setMigrators(migrators) {
+    debug(`db-migrator:core :: setting migrators`, migrators);
     this.migrators = Array.isArray(migrators) ? migrators : [migrators];
   }
 
+  // validate all the migrators if they are valid or not and set in migrators variable
   validateMigrators(migrators) {
+    debug(`db-migrator:core :: validating migrators`);
     const errorsArray = []
     if (utils.isEmpty(migrators)) {
       errorsArray.push(errors.emptyMigrator());
@@ -59,8 +73,10 @@ class DbMigrator {
     return errorsArray;
   }
 
-  validateMigrator({ from = {}, to = {}, properties = {} }) {
+  // Validator single migrator - from, to, transform and properties
+  validateMigrator({ from = {}, to = {}, transform = null, properties = {} }) {
     const errorsArray = [];
+    // Validate from object
     if (utils.isObject(from) && !utils.isEmpty(from)) {
       errorsArray.push(...this.sourceConnector.validateSourceMigrator(from));
 
@@ -72,12 +88,19 @@ class DbMigrator {
       errorsArray.push(errors.invalidFrom());
     }
 
+    // Validate to object
     if (utils.isObject(to) && !utils.isEmpty(to)) {
       errorsArray.push(...this.targetConnector.validateTargetMigrator(to));
     } else {
       errorsArray.push(errors.invalidTo());
     }
 
+    // Validate transform key
+    if (!utils.isEmpty(transform) && !utils.isFunction(transform)) {
+      errorsArray.push(errors.invalidTransform());
+    }
+
+    // Validate properties
     if (!utils.isObject(properties)) {
       errorsArray.push(errors.invalidProperties());
     } else if (!utils.isEmpty(properties)) {
@@ -86,6 +109,7 @@ class DbMigrator {
     return errorsArray;
   }
 
+  // Validate properties
   validateMigratorProperties(properties) {
     const errorsArray = [];
     Object.keys(properties).forEach((property) => {
@@ -171,7 +195,7 @@ class DbMigrator {
   // and executes the callback multiple times in specific intervals
   migrateCollectionBatch(migrator) {
     return new Promise((resolve, reject) => {
-      const { from, to, properties } = migrator;
+      const { from, to, transform, properties } = migrator;
       this.sourceConnector.fetchDocuments(from, from.skip, from.batch, (err, sourceDocuments) => {
         if (err) return reject(err);
         if (sourceDocuments.length === 0) return resolve(true);
@@ -180,7 +204,7 @@ class DbMigrator {
         this.setStatistics('fetchedDocuments', fetchedDocuments);
 
         sourceDocuments.forEach((sourceDocument) => {
-          const targetDocument = this.transformDocument(sourceDocument, properties);
+          const targetDocument = this.transformDocument(sourceDocument, transform, properties);
           this.targetConnector.storeDocument(to, targetDocument)
             .then(() => {
               this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + 1);
@@ -188,7 +212,13 @@ class DbMigrator {
                 resolve(false);
               }
             })
-            .catch((err) => reject(err));
+            .catch((err) => {
+              if ( this.getOption('ignoreDuplicates') &&  err.code === 'DUPLICATE_DOCUMENT') {
+                this.setStatistics('ignoredDocuments', this.getStatistics('ignoredDocuments') + 1);
+                resolve(false);
+              }
+              reject(err)
+            });
         });
       });
     });
@@ -196,7 +226,13 @@ class DbMigrator {
 
   // Process and transform a document as per the need.
   // this function calls the operators and functions
-  transformDocument(document, properties) {
+  transformDocument(document, transform, properties) {
+
+    // If there is a transform function to modify each record
+    if (transform && utils.isFunction(transform)) {
+      return transform(document);
+    }
+
     for (const property in properties) {
       if (properties.hasOwnProperty(property)) {
         const value = properties[property];
@@ -216,7 +252,7 @@ class DbMigrator {
     return document;
   }
 
-  initialize() {
+  initialize(options) {
     this.statistics = {};
 
     this.connectors = {};
@@ -226,9 +262,21 @@ class DbMigrator {
     this.addConnectors(connectors);
     this.addOperators(operators);
     this.addFunctions(functions);
+
+    this.setOptions(options);
   }
 
+  setOptions(options) {
+    this.options = { ...DEFAULT_OPTIONS, ...options };
+  }
+
+  getOption(key) {
+    return this.options[key];
+  }
+
+  // load sub module - connectors, operators and functions
   loadModule(module) {
+    debug(`db-migrator:core :: loading module`, module.name);
     const { name = '', connectors = [], operators = [], functions = [] } = module;
     if (!utils.isEmpty(connectors)) this.addConnectors(connectors);
     if (!utils.isEmpty(operators)) this.addOperators(operators);
@@ -244,12 +292,12 @@ class DbMigrator {
   }
 
   addConnector(connector, connectorModule) {
-    console.log('addConnector');
-    console.log(connector);
+    debug(`db-migrator:core :: adding connector`, connector);
     this.connectors[connector] = connectorModule;
   }
 
   removeConnector(connector) {
+    debug(`db-migrator:core :: removing connector`, connector);
     this.connectors[connector] = null;
   }
 
@@ -270,10 +318,12 @@ class DbMigrator {
   }
 
   addOperator(operator, fn) {
+    debug(`db-migrator:core :: adding operator`, operator);
     this.operators[operator] = fn;
   }
 
   removeOperator(operator) {
+    debug(`db-migrator:core :: removing operator`, operator);
     this.operators[operator] = null;
   }
 
@@ -294,10 +344,12 @@ class DbMigrator {
   }
 
   addFunction(name, fn) {
+    debug(`db-migrator:core :: adding function`, name);
     this.functions[name] = fn;
   }
 
   removeFunction(name) {
+    debug(`db-migrator:core :: removing function`, name);
     this.functions[name] = null;
   }
 
@@ -309,6 +361,7 @@ class DbMigrator {
     }
   }
 
+  // Execute the operator
   executeOperator(operator, document, property, arg) {
     if (Array.isArray(arg)) {
       arg = arg.map(arg => this.executeFunction(arg));
@@ -351,6 +404,7 @@ class DbMigrator {
       fetchedDocuments: 0,
       migratedDocuments: 0,
       totalDocuments: 0,
+      ignoredDocuments: 0,
     });
   }
 
@@ -368,11 +422,12 @@ class DbMigrator {
 
   // Log progress of fetched, migrated and total count of a collection
   logStatistics() {
-    const { fetchedDocuments, migratedDocuments, totalDocuments } = this.statistics;
-    const string = `Fetched ${fetchedDocuments} and Migrated ${migratedDocuments} of ${totalDocuments}`;
+    const { fetchedDocuments, migratedDocuments, ignoredDocuments, totalDocuments } = this.statistics;
+    const string = ` Total: ${totalDocuments}  ::  Fetched: ${fetchedDocuments}  ::  Migrated: ${migratedDocuments}  ::  Ignored: ${ignoredDocuments} `;
+    const percent = (migratedDocuments + ignoredDocuments) && Math.round((migratedDocuments + ignoredDocuments) / totalDocuments * 100 * 10) / 10;
     process.stdout.clearLine();
     process.stdout.cursorTo(0);
-    process.stdout.write(`DbMigrator :: collection :: ${string}`);
+    process.stdout.write(`DbMigrator :: collection :: ${percent}% :: ${string}`);
   }
 
 }
