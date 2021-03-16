@@ -1,6 +1,6 @@
 {
   "name": "db-migrator-core",
-  "version": "0.0.0",
+  "version": "0.0.1-alpha.0",
   "description": "A database migration tool built in node.js.",
   "author": "Abhishek Badoni <abhishekbadoni>",
   "homepage": "",
