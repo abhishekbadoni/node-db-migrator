@@ -9,6 +9,7 @@ const ERROR_CODES = {
 class MongoConnecter extends BaseConnector {
 
   getDocumentError(err) {
+    console.log("getDocumentError mongo.js Error: ", err);
     if (ERROR_CODES.hasOwnProperty(err.code)) {
       err.code = ERROR_CODES[err.code];
     }
@@ -82,6 +83,40 @@ class MongoConnecter extends BaseConnector {
       this.database.collection(to.collection).insertOne(document).then(res => {
         resolve(res);
       }).catch(err => {
+        reject(this.getDocumentError(err));
+      });
+    });
+  }
+
+  storeDocuments(to, documents) {
+    return new Promise((resolve, reject) => {
+      this.database.collection(to.collection).insertMany(documents, { ordered: false }).then(res => {
+        resolve(res);
+      }).catch(err => {
+        reject(this.getDocumentError(err));
+      });
+    });
+  }
+
+  updateDocument(from, query) {
+    return new Promise((resolve, reject) => {
+      const { collection, update = {} } = from;
+      this.database.collection(collection).updateOne(query, {$set: update}).then(res => {
+        resolve(res);
+      }).catch(err => {
+        reject(this.getDocumentError(err));
+      });
+    });
+  }
+
+  updateDocuments(from, query) {
+    return new Promise((resolve, reject) => {
+      const { collection, update = {} } = from;
+      // console.log("updateDocuments:", query, update);
+      this.database.collection(collection).updateMany(query, {$set: update}).then(res => {
+        resolve(res);
+      }).catch(err => {
+        console.log("Error: ", err);
         reject(this.getDocumentError(err));
       });
     });

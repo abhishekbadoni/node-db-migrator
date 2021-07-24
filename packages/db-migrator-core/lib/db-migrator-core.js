@@ -149,8 +149,7 @@ class DbMigrator {
 
 
   // Migrate all the collections one by one in the given order.
-  migrate() {
-    (async () => {
+  async migrate() {
       const migratorCount = Object.keys(this.migrators).length;
       let migratorIndex = 0;
       this.log(`Database :: ${this.sourceDb} => ${this.targetDb} :: Starting Migration . . . `, false, true);
@@ -170,8 +169,7 @@ class DbMigrator {
         }
       }
       this.log(`Database :: ${this.sourceDb} => ${this.targetDb} :: Migration Completed! :)`, false, true);
-      process.exit();
-    })();
+      return;
   }
 
   // Migrate single collection - name is the name of migrator and migrator is migrator configs
@@ -193,33 +191,81 @@ class DbMigrator {
 
   // Fetch All the documents from source collection of source database
   // and executes the callback multiple times in specific intervals
-  migrateCollectionBatch(migrator) {
+  async migrateCollectionBatch(migrator) {
     return new Promise((resolve, reject) => {
       const { from, to, transform, properties } = migrator;
-      this.sourceConnector.fetchDocuments(from, from.skip, from.batch, (err, sourceDocuments) => {
+      this.sourceConnector.fetchDocuments(from, 0, from.batch, (err, sourceDocuments) => {
         if (err) return reject(err);
         if (sourceDocuments.length === 0) return resolve(true);
 
         const fetchedDocuments = this.getStatistics('fetchedDocuments') + sourceDocuments.length;
         this.setStatistics('fetchedDocuments', fetchedDocuments);
 
+        let targetDocuments = [];
+        let sourceDocumentIds = [];
         sourceDocuments.forEach((sourceDocument) => {
           const targetDocument = this.transformDocument(sourceDocument, transform, properties);
-          this.targetConnector.storeDocument(to, targetDocument)
-            .then(() => {
-              this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + 1);
-              if (this.getStatistics('fetchedDocuments') === this.getStatistics('migratedDocuments')) {
-                resolve(false);
-              }
-            })
-            .catch((err) => {
-              if ( this.getOption('ignoreDuplicates') &&  err.code === 'DUPLICATE_DOCUMENT') {
-                this.setStatistics('ignoredDocuments', this.getStatistics('ignoredDocuments') + 1);
-                resolve(false);
-              }
-              reject(err)
-            });
-        });
+          targetDocuments.push(targetDocument);
+          sourceDocumentIds.push(sourceDocument._id)
+        })
+
+        this.targetConnector.storeDocuments(to, targetDocuments).
+        then(async () => {
+          if (from.update && sourceDocumentIds.length) {
+            const updateDocumentsRes = await this.sourceConnector.updateDocuments(from, {_id: {$in: sourceDocumentIds}}); 
+          }
+
+          this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + targetDocuments.length);
+          if (this.getStatistics('fetchedDocuments') === this.getStatistics('migratedDocuments')) {
+            return resolve(false);
+          }
+        }).catch(async (err) => {
+          if ( this.getOption('ignoreDuplicates') &&  err.code === 'DUPLICATE_DOCUMENT') {
+            this.setStatistics('ignoredDocuments', this.getStatistics('ignoredDocuments') + targetDocuments.length);
+
+            if (from.update && sourceDocumentIds.length) {
+              const updateDocumentsRes = await this.sourceConnector.updateDocuments(from, {_id: {$in: sourceDocumentIds}}); 
+            }
+
+            this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + targetDocuments.length);
+            if (this.getStatistics('fetchedDocuments') === this.getStatistics('migratedDocuments')) {
+              return resolve(false);
+            }
+          }
+
+          if ( this.getOption('ignoreDuplicates')) {
+            if (from.update && sourceDocumentIds.length) {
+              const updateDocumentsRes = await this.sourceConnector.updateDocuments(from, {_id: {$in: sourceDocumentIds}}); 
+            }
+
+            this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + targetDocuments.length);
+            if (this.getStatistics('fetchedDocuments') === this.getStatistics('migratedDocuments')) {
+              return resolve(false);
+            }
+          }
+          // return reject(err)
+        })
+
+        // sourceDocuments.forEach(async (sourceDocument) => {
+        //   const targetDocument = this.transformDocument(sourceDocument, transform, properties);
+        //   this.targetConnector.storeDocument(to, targetDocument)
+        //     .then(async () => {
+        //       if(from.update) {
+        //         await this.sourceConnector.updateDocuments(from, {_id: sourceDocument._id});
+        //       }
+        //       this.setStatistics('migratedDocuments', this.getStatistics('migratedDocuments') + 1);
+        //       if (this.getStatistics('fetchedDocuments') === this.getStatistics('migratedDocuments')) {
+        //         return resolve(false);
+        //       }
+        //     })
+        //     .catch((err) => {
+        //       if ( this.getOption('ignoreDuplicates') &&  err.code === 'DUPLICATE_DOCUMENT') {
+        //         this.setStatistics('ignoredDocuments', this.getStatistics('ignoredDocuments') + 1);
+        //         return resolve(false);
+        //       }
+        //       return reject(err)
+        //     });
+        // });
       });
     });
   }
@@ -227,7 +273,8 @@ class DbMigrator {
   // Process and transform a document as per the need.
   // this function calls the operators and functions
   transformDocument(document, transform, properties) {
-
+    document = {...document};
+    
     // If there is a transform function to modify each record
     if (transform && utils.isFunction(transform)) {
       return transform(document);
